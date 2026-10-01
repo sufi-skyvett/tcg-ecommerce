@@ -248,11 +248,48 @@ class CardDuelmaController extends Controller
             }
         }
 
-        // 6. Extract Details matching Cardtable keys
+        // 6. SAFE PAYLOAD FORMATTER
+        // Tries to clean up the wikitext into a readable list. Falls back to raw text if it fails.
+        $formattedPayload = $wikitext;
+        try {
+            // Force a newline before any "| field =" parameter
+            $formatted = preg_replace('/\|\s*([a-zA-Z0-9_]+)\s*=/', "\n| $1 = ", $wikitext);
+            // Force a newline before Categories
+            $formatted = str_replace('[[Category:', "\n[[Category:", $formatted);
+            // Clean up any awkward double empty lines
+            $formatted = preg_replace("/\n{3,}/", "\n\n", $formatted);
+
+            $formattedPayload = trim($formatted);
+        } catch (\Throwable $e) {
+            // Fallback to original wikitext if regex formatting breaks
+            $formattedPayload = $wikitext;
+        }
+
+        // 7. EXTRACT DETAILS (WITH TWINPACT / DOUBLE-SIDED SUPPORT)
         $cardName = $extract(['name', 'english_name', 'enname']) ?? $pageTitle;
+        $cardName2 = $extract(['name2', 'english_name2', 'enname2']);
+        if ($cardName2) {
+            $cardName .= " / " . $cardName2;
+        }
+
+        $type = $extract(['type']) ?? 'Creature';
+        $type2 = $extract(['type2']);
+        if ($type2) {
+            $type .= " / " . $type2;
+        }
+
+        $cost = $extract(['cost']);
+        $cost2 = $extract(['cost2']);
+        if ($cost2) {
+            $cost .= " / " . $cost2;
+        }
 
         // Fandom uses 'engtext' for English text, falls back to 'jptext'
         $effect = $extract(['engtext', 'english_text', 'text', 'jptext']);
+        $effect2 = $extract(['engtext2', 'english_text2', 'text2', 'jptext2']);
+        if ($effect2) {
+            $effect .= "\n\n[ Twinpact / 2nd Effect ]:\n" . $effect2;
+        }
 
         $card = CardDuelma::updateOrCreate(
             [
@@ -261,13 +298,13 @@ class CardDuelmaController extends Controller
             ],
             [
                 'name'             => $cardName,
-                'card_type'        => $extract(['type']) ?? 'Creature',
+                'card_type'        => $type,
                 'civilization'     => $extract(['civilization', 'civ']),
-                'mana_cost'        => $extract(['cost']),
+                'mana_cost'        => $cost,
                 'races'            => $extract(['race', 'races']),
                 'effect_text'      => $effect,
                 'image_path'       => $localImagePath,
-                'payload'          => $wikitext,
+                'payload'          => $formattedPayload, // Uses the safely formatted version
             ]
         );
 

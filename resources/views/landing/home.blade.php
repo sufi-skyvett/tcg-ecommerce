@@ -109,6 +109,7 @@
                                     $cardCiv =$item->civilization ?? '';
                                     $cardEffect =$item->effect_text ?? '';
                                     $cardImg =$item->image_path ?? '';
+                                    $cardPayload = $item->payload ?? '';
                                 @endphp
                                 <div class="card-item group">
                                     <div class="rounded-2xl border border-gray-100 bg-white shadow-sm hover:shadow-md transition overflow-hidden flex flex-col h-full">
@@ -149,6 +150,14 @@
                                             @if(!empty($cardEffect))
                                                 <div class="mt-2 pt-2 border-t border-gray-50 text-[11px] text-gray-600 line-clamp-3 leading-relaxed">
                                                     {{ $cardEffect }}
+                                                </div>
+                                            @endif
+                                            @if(!empty($cardPayload))
+                                                <div class="mt-2 pt-2 border-t border-gray-100">
+                                                    <div class="text-[9px] font-bold text-gray-400 uppercase tracking-wider mb-1">Raw Payload</div>
+                                                    <div class="text-[10px] text-gray-500 bg-gray-50 p-2 rounded border border-gray-100 h-24 overflow-y-auto whitespace-pre-wrap font-mono leading-tight">
+                                                        {{ $cardPayload }}
+                                                    </div>
                                                 </div>
                                             @endif
                                         </div>
