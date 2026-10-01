@@ -39,5 +39,8 @@ Route::middleware('auth')->group(function () {
 });
 
 //DuelMa
-Route::post('/cards/fetch-wiki', [CardDuelmaController::class, 'fetchFromFandom'])->name('cards.fetch-wiki');
+// Allows 60 requests per minute to your endpoint, while controller logic caps Fandom at 20/min
+Route::post('/cards/fetch-wiki', [CardDuelmaController::class, 'fetchFromFandom'])
+    ->middleware(['throttle:60,1'])
+    ->name('cards.fetch-wiki');
 require __DIR__ . '/auth.php';

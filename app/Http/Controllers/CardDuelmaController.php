@@ -6,6 +6,7 @@ use App\Models\Card;
 use App\Models\CardDuelma;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -27,9 +28,41 @@ class CardDuelmaController extends Controller
             $cleanSet = 'DM' . $cleanSet;
         }
 
+        // 1. DATABASE CHECK FIRST (Saves Fandom API calls)
+        $existing = CardDuelma::where('set_code', $cleanSet)
+            ->where('collector_number', $rawNum)
+            ->first();
+
+        // If card exists and user didn't explicitly request a fresh sync, return DB data directly
+        if ($existing && !$request->boolean('force_refresh')) {
+            return response()->json([
+                'success' => true,
+                'card'    => $existing,
+                'source'  => 'database',
+            ]);
+        }
+
+        // 2. GLOBAL OUTBOUND RATE LIMIT (Max 20 requests per 60 seconds to Fandom)
+        $limiterKey = 'fandom-api-global';
+        $maxAttempts = 20;
+        $decaySeconds = 60;
+
+        if (RateLimiter::tooManyAttempts($limiterKey, $maxAttempts)) {
+            $secondsRemaining = RateLimiter::availableIn($limiterKey);
+
+            return response()->json([
+                'success' => false,
+                'message' => "Fandom Wiki query limit reached. Please wait {$secondsRemaining} seconds before searching new cards.",
+                'retry_after' => $secondsRemaining,
+            ], 429);
+        }
+
+        // Count this execution against the rate limit
+        RateLimiter::hit($limiterKey, $decaySeconds);
+
         $endpoint = 'https://duelmasters.fandom.com/api.php';
 
-        // 1. & 2. Search API with Fallback Queries
+        // 3. Search API with Fallback Queries
         $searchQueries = [
             "{$cleanSet} \"{$rawNum}\"", // Strict exact match search
             "{$cleanSet} {$rawNum}"      // Fallback loose search if the first fails
@@ -46,7 +79,7 @@ class CardDuelmaController extends Controller
                 'list'        => 'search',
                 'srsearch'    => $queryStr,
                 'srnamespace' => 0,
-                'srlimit'     => 5,
+                'srlimit'     => 3, // Reduced from 5 to minimize revision queries
                 'format'      => 'json',
             ]);
 
@@ -110,7 +143,7 @@ class CardDuelmaController extends Controller
 
         $wikitext = $validWikitext;
 
-        // 3. Exact field extractor
+        // 4. Exact field extractor
         $extract = function ($fields) use ($wikitext) {
             if (!is_array($fields)) {
                 $fields = [$fields];
@@ -143,7 +176,7 @@ class CardDuelmaController extends Controller
             return null;
         };
 
-        // 4. Download Card Image via the '| image =' field
+        // 5. Download Card Image via the '| image =' field
         $localImagePath = null;
         $rawImageName = $extract(['image', 'image1']);
 
@@ -215,7 +248,7 @@ class CardDuelmaController extends Controller
             }
         }
 
-        // 5. Extract Details matching Cardtable keys
+        // 6. Extract Details matching Cardtable keys
         $cardName = $extract(['name', 'english_name', 'enname']) ?? $pageTitle;
 
         // Fandom uses 'engtext' for English text, falls back to 'jptext'
@@ -241,6 +274,7 @@ class CardDuelmaController extends Controller
         return response()->json([
             'success' => true,
             'card'    => $card,
+            'source'  => 'api',
         ]);
     }
 }
