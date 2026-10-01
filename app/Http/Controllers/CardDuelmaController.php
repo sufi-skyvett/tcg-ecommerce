@@ -29,72 +29,86 @@ class CardDuelmaController extends Controller
 
         $endpoint = 'https://duelmasters.fandom.com/api.php';
 
-        // 1. Search Fandom API
-        $searchResponse = Http::withHeaders([
-            'User-Agent' => 'MDS_OCG_Community_Tool/1.0 (contact@mds.local)',
-        ])->get($endpoint, [
-            'action'      => 'query',
-            'list'        => 'search',
-            'srsearch'    => "{$cleanSet} \"{$rawNum}\"",
-            'srnamespace' => 0,
-            'srlimit'     => 5,
-            'format'      => 'json',
-        ]);
+        // 1. & 2. Search API with Fallback Queries
+        $searchQueries = [
+            "{$cleanSet} \"{$rawNum}\"", // Strict exact match search
+            "{$cleanSet} {$rawNum}"      // Fallback loose search if the first fails
+        ];
 
-        $searchResults = $searchResponse->json('query.search', []);
+        $validWikitext = null;
+        $pageTitle = null;
 
-        if (empty($searchResults)) {
+        foreach ($searchQueries as $queryStr) {
+            $searchResponse = Http::withHeaders([
+                'User-Agent' => 'MDS_OCG_Community_Tool/1.0 (contact@mds.local)',
+            ])->get($endpoint, [
+                'action'      => 'query',
+                'list'        => 'search',
+                'srsearch'    => $queryStr,
+                'srnamespace' => 0,
+                'srlimit'     => 5,
+                'format'      => 'json',
+            ]);
+
+            $searchResults = $searchResponse->json('query.search', []);
+
+            foreach ($searchResults as $result) {
+                $t = $result['title'];
+
+                // Skip obvious set overviews or artwork gallery pages
+                if (Str::startsWith($t, 'DM') && Str::contains($t, ['Fantasy', 'Pack', 'Deck', 'BEST', 'Booster', 'List', 'Theme', 'Artwork'])) {
+                    continue;
+                }
+
+                // Fetch page wikitext
+                $pageResponse = Http::withHeaders([
+                    'User-Agent' => 'MDS_OCG_Community_Tool/1.0 (contact@mds.local)',
+                ])->get($endpoint, [
+                    'action'  => 'query',
+                    'titles'  => $t,
+                    'prop'    => 'revisions',
+                    'rvprop'  => 'content',
+                    'format'  => 'json',
+                ]);
+
+                $pages = $pageResponse->json('query.pages', []);
+                $pageData = reset($pages);
+                $wikitext = $pageData['revisions'][0]['*'] ?? '';
+
+                // Handle redirects
+                if (preg_match('/#REDIRECT\s*\[\[(.*?)\]\]/i', $wikitext, $redir)) {
+                    $t = trim($redir[1]);
+                    $pageResponse = Http::withHeaders([
+                        'User-Agent' => 'MDS_OCG_Community_Tool/1.0 (contact@mds.local)',
+                    ])->get($endpoint, [
+                        'action'  => 'query',
+                        'titles'  => $t,
+                        'prop'    => 'revisions',
+                        'rvprop'  => 'content',
+                        'format'  => 'json',
+                    ]);
+                    $pages = $pageResponse->json('query.pages', []);
+                    $pageData = reset($pages);
+                    $wikitext = $pageData['revisions'][0]['*'] ?? '';
+                }
+
+                // Verify that this is a REAL card page by looking for the Cardtable
+                if (stripos($wikitext, '{{Cardtable') !== false) {
+                    $validWikitext = $wikitext;
+                    $pageTitle = $t;
+                    break 2; // Found it! Break entirely out of both loops
+                }
+            }
+        }
+
+        if (!$validWikitext) {
             return response()->json([
                 'success' => false,
-                'message' => "No card found for {$rawSet} #{$rawNum} on Duel Masters Fandom Wiki.",
+                'message' => "No valid card data found for {$rawSet} #{$rawNum} on Duel Masters Fandom Wiki.",
             ], 404);
         }
 
-        // Pick card article rather than booster set overview
-        $pageTitle = null;
-        foreach ($searchResults as $result) {
-            $t = $result['title'];
-            if (Str::startsWith($t, 'DM') && Str::contains($t, ['Fantasy', 'Pack', 'Deck', 'BEST', 'Booster', 'List', 'Theme'])) {
-                continue;
-            }
-            $pageTitle = $t;
-            break;
-        }
-        if (!$pageTitle) {
-            $pageTitle = $searchResults[0]['title'];
-        }
-
-        // 2. Fetch page wikitext
-        $pageResponse = Http::withHeaders([
-            'User-Agent' => 'MDS_OCG_Community_Tool/1.0 (contact@mds.local)',
-        ])->get($endpoint, [
-            'action'  => 'query',
-            'titles'  => $pageTitle,
-            'prop'    => 'revisions',
-            'rvprop'  => 'content',
-            'format'  => 'json',
-        ]);
-
-        $pages = $pageResponse->json('query.pages', []);
-        $pageData = reset($pages);
-        $wikitext = $pageData['revisions'][0]['*'] ?? '';
-
-        // Handle redirects
-        if (preg_match('/#REDIRECT\s*\[\[(.*?)\]\]/i', $wikitext, $redir)) {
-            $pageTitle = trim($redir[1]);
-            $pageResponse = Http::withHeaders([
-                'User-Agent' => 'MDS_OCG_Community_Tool/1.0 (contact@mds.local)',
-            ])->get($endpoint, [
-                'action'  => 'query',
-                'titles'  => $pageTitle,
-                'prop'    => 'revisions',
-                'rvprop'  => 'content',
-                'format'  => 'json',
-            ]);
-            $pages = $pageResponse->json('query.pages', []);
-            $pageData = reset($pages);
-            $wikitext = $pageData['revisions'][0]['*'] ?? '';
-        }
+        $wikitext = $validWikitext;
 
         // 3. Exact field extractor
         $extract = function ($fields) use ($wikitext) {
@@ -106,14 +120,19 @@ class CardDuelmaController extends Controller
                     $raw = trim($m[1]);
                     if ($raw === '') continue;
 
-                    // Expand {{Shield Trigger|...}} -> [Shield Trigger]
+                    // Expand specific templates if needed
                     $cleaned = preg_replace('/\{\{Shield Trigger(?:\|[^}]*)?\}\}/i', '[Shield Trigger]', $raw);
-                    // Strip {{Ruby|Kanji|Hiragana}} -> Kanji
+
+                    // Keep the primary Kanji for Ruby templates {{Ruby|Kanji|Hiragana}} -> Kanji
                     $cleaned = preg_replace('/\{\{Ruby\|([^\|\}]+)\|[^\}]*\}\}/i', '$1', $cleaned);
-                    // Strip remaining templates {{...}}
-                    $cleaned = preg_replace('/\{\{[^}]+\}\}/', '', $cleaned);
+
+                    // Convert remaining templates to brackets E.g., {{Shinkarise}} -> [Shinkarise]
+                    $cleaned = preg_replace('/\{\{\s*([^}|]+)(?:\|[^}]*)?\}\}/', '[$1]', $cleaned);
+
                     // Strip wiki links: [[Link|Text]] -> Text, [[Text]] -> Text
                     $cleaned = preg_replace('/\[\[(?:[^|\]]*\|)?([^\]]+)\]\]/', '$1', $cleaned);
+
+                    // Remove any remaining HTML tags
                     $cleaned = trim(strip_tags($cleaned));
 
                     if (!empty($cleaned)) {
@@ -127,6 +146,11 @@ class CardDuelmaController extends Controller
         // 4. Download Card Image via the '| image =' field
         $localImagePath = null;
         $rawImageName = $extract(['image', 'image1']);
+
+        // FALLBACK: If standard image field is missing, grab the first image from a <gallery>
+        if (!$rawImageName && preg_match('/<gallery>\s*([^|\n]+?\.(?:jpg|png|jpeg|webp))/is', $wikitext, $galleryMatch)) {
+            $rawImageName = trim($galleryMatch[1]);
+        }
 
         if ($rawImageName) {
             // Strip any existing 'File:' and trim whitespace

@@ -1,17 +1,6 @@
 @extends('layouts.landing')
 
 @section('content')
-    <!-- Non-Profit Disclaimer Banner -->
-    <div class="bg-amber-50 border-b border-amber-200 text-amber-900 text-xs py-2.5 px-4 text-center">
-        <div class="max-w-7xl mx-auto flex items-center justify-center gap-2">
-            <span class="inline-block px-1.5 py-0.5 rounded bg-amber-200 text-amber-800 font-bold uppercase text-[10px] tracking-wider">Disclaimer</span>
-            <span>
-                MDS OCG Duel Masters Translation Hub is a voluntary, non-profit community project built for Southeast Asian players.
-                Duel Masters is a trademark of Takara Tomy and Wizards of the Coast. No copyright infringement is intended.
-            </span>
-        </div>
-    </div>
-
     <!-- Hero Section -->
     <section class="bg-white">
         <div class="max-w-7xl mx-auto px-4 py-16 text-center">
@@ -125,12 +114,12 @@
                                     data-set="{{ strtolower(str_replace('-', '', $cardSet)) }}"
                                     data-number="{{ strtolower($cardNum) }}">
                                     <div class="rounded-2xl border border-gray-100 bg-white shadow-sm hover:shadow-md transition overflow-hidden flex flex-col h-full">
-                                        <div class="aspect-[3/4] bg-gray-100 overflow-hidden relative">
+                                        <div class="h-64 sm:h-72 bg-gray-100 overflow-hidden relative flex items-center justify-center p-3">
                                             @if(!empty($cardImg))
-                                                <img src="{{ str_starts_with($cardImg, 'http') ? $cardImg : asset('storage/' .$cardImg) }}"
+                                                <img src="{{ str_starts_with($cardImg, 'http') ? $cardImg : asset('storage/' . $cardImg) }}"
                                                     alt="{{ $cardName ?: 'Card' }}"
                                                     loading="lazy"
-                                                    class="w-full h-full object-cover group-hover:scale-[1.03] transition duration-200">
+                                                    class="max-w-full max-h-full object-contain group-hover:scale-[1.05] transition duration-200">
                                             @else
                                                 <div class="w-full h-full flex flex-col items-center justify-center text-gray-400 text-xs p-2 text-center">
                                                     <span>No Card Art</span>
@@ -138,8 +127,8 @@
                                             @endif
 
                                             @if(!empty($cardSet) || !empty($cardNum))
-                                                <span class="absolute bottom-1.5 left-1.5 bg-black/75 backdrop-blur-sm text-white font-mono text-[10px] px-1.5 py-0.5 rounded">
-                                                    {{ $cardSet }} {{$cardNum }}
+                                                <span class="absolute bottom-1.5 left-1.5 bg-black/75 backdrop-blur-sm text-white font-mono text-[10px] px-1.5 py-0.5 rounded z-10">
+                                                    {{ $cardSet }} {{ $cardNum }}
                                                 </span>
                                             @endif
                                         </div>
@@ -205,8 +194,19 @@
                 Duel Masters is a registered trademark of Takara Tomy and Wizards of the Coast.
                 This translation archive is an independent, non-commercial fan initiative managed by the MDS OCG community
                 to support local play, casual deck testing, and tournament organization across Malaysia and Southeast Asia.
-        </div>
-            <p class="text-xs text-gray-400 mt-4">&copy; {{ date('Y') }} MDS OCG. Built for the community.</p>
+            </div>
+            <p class="text-xs text-gray-400 mt-4 mb-6">&copy; {{ date('Y') }} MDS OCG. Built for the community.</p>
+
+            <!-- Non-Profit Disclaimer Banner Moved Here -->
+            <div class="bg-amber-50 border border-amber-200 text-amber-900 text-xs py-3 px-4 rounded-xl text-center max-w-3xl mx-auto">
+                <div class="flex flex-col sm:flex-row items-center justify-center gap-2">
+                    <span class="inline-block px-1.5 py-0.5 rounded bg-amber-200 text-amber-800 font-bold uppercase text-[10px] tracking-wider shrink-0">Disclaimer</span>
+                    <span>
+                        MDS OCG Duel Masters Translation Hub is a voluntary, non-profit community project built for Southeast Asian players.
+                        No copyright infringement is intended.
+                    </span>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -321,17 +321,21 @@
                         ? (card.image_path.startsWith('http') ? card.image_path : '/storage/' + card.image_path)
                         : null;
 
+                    const normalizedSet = normalizeCode(card.set_code || '');
+                    const normalizedNum = (card.collector_number || '').toLowerCase();
+
                     const cardElement = document.createElement('div');
                     cardElement.className = 'card-item group';
                     cardElement.setAttribute('data-name', (card.name || '').toLowerCase());
-                    cardElement.setAttribute('data-set', normalizeCode(card.set_code || ''));
-                    cardElement.setAttribute('data-number', (card.collector_number || '').toLowerCase());
+                    cardElement.setAttribute('data-set', normalizedSet);
+                    cardElement.setAttribute('data-number', normalizedNum);
 
                     cardElement.innerHTML = `
                         <div class="rounded-2xl border border-gray-100 bg-white shadow-sm hover:shadow-md transition overflow-hidden flex flex-col h-full ring-2 ring-red-500/20">
                             <div class="aspect-[3/4] bg-gray-100 overflow-hidden relative">
                                 ${imageSrc ? `
-                                    <img src="${imageSrc}" alt="${card.name}" class="w-full h-full object-cover group-hover:scale-[1.03] transition duration-200">
+                                    <!-- CHANGED: object-cover to object-contain -->
+                                    <img src="${imageSrc}" alt="${card.name}" class="w-full h-full object-contain group-hover:scale-[1.03] transition duration-200">
                                 ` : `
                                     <div class="w-full h-full flex flex-col items-center justify-center text-gray-400 text-xs p-2 text-center">
                                         <span>No Card Art</span>
@@ -348,7 +352,7 @@
                                     </div>
                                     ${card.card_type ? `
                                         <div class="text-[11px] text-gray-500 mt-1 capitalize font-medium">
-                                            ${card.card_type}${card.civilization ? '• ' + card.civilization : ''}
+                                            ${card.card_type}${card.civilization ? ' • ' + card.civilization : ''}
                                         </div>
                                     ` : ''}
                                 </div>
@@ -360,6 +364,12 @@
                             </div>
                         </div>
                     `;
+
+                    // CHANGED: Check for duplicate existing card element and remove it before prepending new one
+                    const existingCard = document.querySelector(`.card-item[data-set="${normalizedSet}"][data-number="${normalizedNum}"]`);
+                    if (existingCard) {
+                        existingCard.remove();
+                    }
 
                     grid.prepend(cardElement);
                     showAlert(`Successfully fetched and cached: ${card.name}!`, false);
